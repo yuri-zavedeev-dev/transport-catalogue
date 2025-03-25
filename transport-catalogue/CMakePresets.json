@@ -1,0 +1,13 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "transport_catalogue_debug_cfg",
+            "generator": "MinGW Makefiles",
+            "binaryDir": "${workspaceFolder}/build/",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ]
+}

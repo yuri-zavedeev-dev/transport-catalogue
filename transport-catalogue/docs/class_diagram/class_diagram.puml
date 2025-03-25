@@ -1,0 +1,794 @@
+@startuml class_diagram
+!theme reddress-darkred
+hide empty members
+set namespaceSeparator ::
+'left to right direction
+
+'json_builder.hpp
+class json::UnfinishedNode{
+    using KeyValue = std::pair<std::string, std::optional<Node>>
+    --
+    + content : std::variant<Node::Value, KeyValue, Bracket>
+}
+enum json::Bracket{
+    ArrayStart
+    ArrayEnd
+    DictStart
+    DictEnd
+}
+class json::Builder{
+    - root_ : std::optional<Node>
+    - unfinished_nodes_ptrs_stack_ : std::stack<std::unique_ptr<UnfinishedNode>>
+    - current_state_ : State
+
+    + Key(string) : KeyContext
+    + Value(value) : Builder&
+    + StartDict() : DictContext
+    + EndDict() : Builder&
+    + StartArray() : ArrayContext
+    + EndArray() : Builder&
+    + Build() : Node
+    + Empty() : bool
+
+    - ThrowIfFinished(method_name)
+    - PushValue(value) : Builder&
+    - FillDictWithNodes(key_values, new_dict)
+    - FillArrayWithNodes(values, new_array)
+    - RecoverContext()
+}
+enum json::State{
+    Finished
+    ExpectingValue
+    ExpectingEndOfArray
+    ExpectingEndOfDict
+}
+interface json::IBuilderItemContext{
+    # builder_ : Builder&
+
+    + IBuilderItemContext(builder : Builder&)
+
+    + Key(string) : KeyContext
+    + Value(value) : Builder&
+    + StartDict() : DictContext
+    + EndDict() : Builder&
+    + StartArray() : ArrayContext
+    + EndArray() : Builder&
+    + Build() : Node
+    + Empty() : bool
+}
+class json::KeyContext{
+    + KeyContext(base_ctx : IBuilderItemContext)
+
+    + Value(value) : Builder&
+    + StartDict() : DictContext
+    + StartArray() : ArrayContext
+
+    + Key(string) : KeyContext = delete
+    + EndDict() : Builder& = delete
+    + EndArray() : Builder& = delete
+}
+class json::DictContext{
+    + DictContext(base_ctx : IBuilderItemContext)
+
+    + Key(string) : KeyContext
+    + EndDict() : Builder&
+
+    + Value(value) : Builder& = delete
+    + StartDict() : DictContext = delete
+    + StartArray() : ArrayContext = delete
+    + EndArray() : Builder& = delete
+}
+class json::ArrayContext{
+    + ArrayContext(base_ctx : IBuilderItemContext)
+    
+    + Value(value) : Builder&
+    + StartDict() : DictContext
+    + StartArray() : ArrayContext
+    + EndArray() : Builder&
+
+    + Key(string) : KeyContext = delete
+    + EndDict() : Builder& = delete
+}
+
+UnfinishedNode *-- Bracket
+json::Node <-- UnfinishedNode : > use Node::Value
+Builder o-- Node
+Builder *-- UnfinishedNode
+Builder *-- State
+Builder --> IBuilderItemContext : < return derived classes
+IBuilderItemContext <|.. KeyContext
+IBuilderItemContext <|.. DictContext
+IBuilderItemContext <|.. ArrayContext
+
+'json_reader.hpp
+class json_reader::JsonReader{
+    - document_ : json::Document
+
+    + ReadDocument(input_stream : std::istream&)
+    + GetBaseRequestsNode() : std::optional<json::Node*>
+    + GetStatRequestsNode() : std::optional<json::Node*>
+    + GetRenderSettingsNode() : std::optional<json::Node*>
+    + GetInitRouterNode() : std::optional<json::Node*>
+}
+
+JsonReader *-- json::Document
+
+'json.hpp
+note as json_hpp_usings
+    using Dict = std::map<std::string, Node>
+    using Array = std::vector<Node>
+end note
+class std::variant<std::nullptr_t, Array, Dict, bool, int, double, std::string>
+class json::Node{
+    using variant::variant
+    using Value = variant
+    --
+    + Node(value : Value)
+
+    + IsInt() : bool
+    + AsInt() : int
+    + IsPureDouble() : bool
+    + IsDouble() : bool
+    + AsDouble() : double
+    + IsBool() : bool
+    + AsBool() : bool
+    + IsNull() : bool
+    + IsArray() : bool
+    + AsArray() : Array&
+    + IsString() : bool
+    + AsString() : std::string&
+    + IsDict() : bool
+    + AsDict() : Dict&
+    + GetValue() : Value&
+}
+class std::runtime_error
+class json::ParsingError
+class json::Document{
+    - root_ : Node
+
+    + Document(root : Node)
+    + GetRoot() : Node&
+}
+
+std::runtime_error <|-- json::ParsingError
+std::variant <|-- Node
+Document *-- Node
+json -- json_hpp_usings
+
+'map_renderer.hpp
+note as svg_renderer_usings
+    using Color = std::variant<std::string //text
+        , std::tuple<int //rgb
+            , int
+            , int
+        >
+        , std::tuple<int //rgba
+            , int
+            , int
+            , double
+        >
+    >
+
+    using ColorPalette = std::vector<Color>
+end note
+class svg_renderer::SphereProjector{
+    - padding_ : double
+    - min_lon_ : double
+    - max_lat_ : double
+    - zoom_coeff_ : double
+
+    + SphereProjector(points_begin, points_end)
+    + operator()(coords : geo::Coordinates) : svg::Point
+}
+struct svg_renderer::RenderSettings{
+    + width : double
+    + height : double
+    + padding : double
+    + line_width : double
+    + stop_radius : double
+    + bus_label_font_size : int
+    + bus_label_offset : svg::Point
+    + stop_label_font_size : int
+    + stop_label_offset svg::Point
+    + Color underlayer_color
+    + underlayer_width : double
+    + palette : ColorPalette
+}
+struct svg_renderer::StopData{
+    + name : std::string_view
+    + location : geo::Coordinates
+}
+struct svg_renderer::RouteData{
+    + name : std::string
+    + stops : std::vector<StopData>
+    + is_round_trip : bool
+}
+class svg_renderer::Renderer{
+    - unique_coordinates_ : std::unordered_set<geo::Coordinates, geo::CoordinatesHasher>
+    - stops_data_ : std::set<StopData, StopDataCmp> 
+    - routes_data_ : std::set<RouteData, RouteDataCmp>
+    - document_ : svg::Document
+    - settings_ : RenderSettings
+    - projector_ : SphereProjector
+    - color_it_ : ColorPalette::iterator
+
+    + Render(output_stream : std::ostream&)
+    + SetSettings(settings : RenderSettings&&)
+    + AddRoute(route_data : RouteData&&)
+
+    - RenderRoutes()
+    - DrawRoutePolylines()
+    - DrawRouteTextWithBackground()
+    - DrawStopsPoints()
+    - DrawStopTextWithBackground()
+    - ConvertColorToString(color : Color&) : std::string
+    - GetNextColor() : Color&
+}
+
+struct geo::Coordinates
+struct svg::Point
+SphereProjector --> geo::Coordinates : < use
+SphereProjector --> svg::Point : < return
+RenderSettings o-- svg::Point
+StopData *-- geo::Coordinates
+RouteData o-- StopData
+Renderer *-- StopData
+Renderer *-- RouteData
+Renderer *-- svg::Document
+Renderer *-- RenderSettings
+Renderer *-- SphereProjector
+svg_renderer -- svg_renderer_usings
+
+'svg.hpp
+note as svg_hpp_usings
+    using Color = std::variant<std::monostate, std::string, Rgb, Rgba>
+end note
+struct svg::Rgb{
+    + red : uint8_t
+    + green : uint8_t
+    + blue : uint8_t
+}
+struct svg::Rgba{
+    + red : uint8_t
+    + green : uint8_t
+    + blue : uint8_t
+    + opacity : double
+}
+enum svg::StrokeLineCap{
+    BUTT
+    ROUND
+    SQUARE
+}
+enum svg::StrokeLineJoin{
+    ARCS
+    BEVEL
+    MITER
+    MITER_CLIP
+    ROUND
+}
+interface svg::PathProps<Owner>{
+    - fill_color_ : std::optional<Color>
+    - stroke_color_ : std::optional<Color>
+    - stroke_width_ : std::optional<double>
+    - stroke_line_cap_ : std::optional<StrokeLineCap>
+    - stroke_line_join_ : std::optional<StrokeLineJoin>
+
+    + SetFillColor(color : Color) : Owner&
+    + SetStrokeColor(color : Color) : Owner&
+    + SetStrokeWidth(width : double) : Owner&
+    + SetStrokeLineCap(line_cap : StrokeLineCap) : Owner&
+    + SetStrokeLineJoin(line_join : StrokeLineJoin) : Owner&
+
+    # ~PathProps() = default
+    # RenderAttrs(out : std::ostream&)
+
+    - AsOwner() : Owner&
+
+}
+struct svg::Point{
+    + x : double
+    + y : double
+}
+struct svg::RenderContext{
+    + out : std::ostream&
+    + indent_step : int = 0
+    + indent : int = 0
+
+    + RenderContext(out : std::ostream&)
+    + RenderContext(out : std::ostream&, indent_step : int, indent : int)
+    + Indented() : RenderContext
+    + RenderIndent()
+}
+interface svg::Object{
+    + Render(context : RenderContext&)
+    + ~Object() = default {abstract}
+
+    - RenderObject(context : RenderContext&) = 0 {abstract}
+}
+class svg::Circle{
+    - center_ : Point
+    - radius_ : double
+
+    + SetCenter(center : Point) : Circle&
+    + SetRadius(radius : double) : Circle&
+}
+class svg::Polyline{
+    - points_ : std::List<Point>
+
+    + AddPoint(point : Point) : Polyline&
+}
+class svg::Text{
+    - pos_ : std::optional<Point>
+    - offset_ : std::optional<Point>
+    - size_ : std::optional<uint32_t>
+    - other_attributes_ : std::optional<std::string> 
+    - data_ : std::string
+
+    + SetPosition(pos : Point) : Text&
+    + SetOffset(offset : Point) : Text&
+    + SetFontSize(size : uint32_t) : Text&
+    + SetFontFamily(font_family : std::string) : Text&
+    + SetFontWeight(font_weight : std::string) : Text&
+    + SetData(data : std::string) : Text&
+}
+interface svg::ObjectContainer{
+    # objects_ : std::deque<std::unique_ptr<Object>>
+
+    + ~ObjectContainer() = default {abstract}
+    + Add(object)
+    + AddPtr(object_ptr : std::unique_ptr<Object>&&) {abstract}
+}
+class svg::Document{
+    + Render(out : std::ostream& out)
+}
+
+PathProps o-- StrokeLineCap
+PathProps o-- StrokeLineJoin
+Object --> RenderContext : < use
+Object <|.. Circle
+Object <|.. Polyline
+Object <|.. Text
+PathProps <|.. Circle
+PathProps <|.. Polyline
+PathProps <|.. Text
+Object --> Point : < derived classes use
+ObjectContainer *-- Object
+ObjectContainer <|.. svg::Document
+PathProps --> Rgb : < use
+PathProps --> Rgba : < use
+svg -- svg_hpp_usings
+
+'graph.hpp
+note as graph_hpp_usings
+    using VertexId = size_t
+    using EdgeId = size_t
+end note
+struct graph::Edge<Weight>{
+    + from : VertexID
+    + to : VertexID
+    + weight : Weight
+}
+class graph::DirectedWeightedGraph<Weight>{
+    using IncidenceList = std::vector<EdgeId>
+    using IncidentEdgesRange = ranges::Range<typename IncidenceList::const_iterator>
+    --
+    - edges_ : std::vector<Edge<Weight>>
+    - incidence_lists_ : std::vector<IncidenceList>
+
+    + DirectedWeightedGraph() = default
+    + DirectedWeightedGraph(vertex_count : size_t)
+    + AddEdge(edge : Edge<Weight>&) : EdgeID
+    + GetVertexCount() : size_t
+    + GetEdgeCount() : size_t
+    + GetEdge(edge_id : EdgeID) : Edge<Weight>&
+    + GetIncidentEdges(vertex : VertexID) : IncidentEdgesRange
+}
+
+DirectedWeightedGraph *-- Edge
+graph -- graph_hpp_usings
+graph --> ranges::Range : < return
+
+'router.hpp
+class graph::Router<Weight>{
+    using Graph = DirectedWeightedGraph<Weight>
+    using RoutesInternalData = std::vector<std::vector<std::optional<RouteInternalData>>>
+    --
+    - ZERO_WEIGHT : weight {static}
+    - graph_ : Graph&
+    - routes_internal_data_ : RoutesInternalData
+
+    + Router(graph : Graph&)
+    + BuildRoute(from : VertexID, to : VertexID) : std::optional<RouteInfo>
+
+    - InitializeRoutesInternalData(graph : Graph&)
+    - RelaxRoute(vertex_from : VertexId, vertex_to : VertexId,
+        route_from : RouteInternalData&, route_to : RouteInternalData&)
+    - RelaxRoutesInternalDataThroughVertex(vertex_count : size_t, vertex_through : size_t)
+}
+struct graph::RouteInfo<Weight>{
+    + weight : Weight
+    + edges : std::vector<EdgeID>
+}
+struct graph::RouteInternalData<Weight>{
+    weight : Weight
+    prev_edge : std::optional<EdgeID>
+}
+
+Router o-- DirectedWeightedGraph
+Router *-- RouteInternalData
+Router --> RouteInfo : < return
+
+'transport_router.hpp
+struct transport_router::WaitItem{
+    + stop_name : std::string_view
+    + time : unsigned int
+}
+struct transport_router::BusItem{
+    + bus : std::string_view
+    + span_count : unsigned int
+    + time : double
+}
+struct transport_router::Item{
+    + content : std::variant<WaitItem, BusItem>
+}
+struct transport_router::RouteInfo{
+    + total_time : double
+    + items : std::vector<Item>
+}
+struct transport_router::TransportRouter{
+    using Catalogue = transport_catalogue::TransportCatalogue
+    using Wrapper = ::transport_catalogue::size_t_wrapper::Wrapper
+    --
+    - bus_wait_time_ : unsigned int
+    - bus_velocity : unsigned int
+    - catalogue_ : Catalogue
+    - graph_ : DirectedWeightedGraph<double>
+    - router_uptr_ : Router<double>
+    - wrapper_uptr_ : std::unique_ptr<Wrapper>
+    - routes_info_ : std::unordered_map<std::pair<size_t, size_t>, RouteInfo, SizeTPairHasher>
+
+    + Init(init : TransportRouterInitList&&)
+    + GetRouteInfo(from : std::string_view,  to : std::string_view) : std::optional<RouteInfo>
+
+    - CreateAndSaveNewRouteInfo(from : size_t, to : size_t) : std::optional<RouteInfo>
+    - SetGraphWithRoutes()
+}
+struct transport_router::TransportRouterInitList{
+    + bus_wait_time : unsigned int 
+    + bus_velocity : unsigned int
+    + catalogue : Catalogue*
+}
+
+Item *-- WaitItem
+Item *-- BusItem
+transport_router::RouteInfo *-- Item
+TransportRouter o-- transport_catalogue::TransportCatalogue
+TransportRouter *-- DirectedWeightedGraph
+TransportRouter *-- Router
+TransportRouter *-- transport_catalogue::size_t_wrapper::Wrapper
+TransportRouter *-- transport_router::RouteInfo
+TransportRouter --> TransportRouterInitList : < use to initialize
+
+'domain.hpp
+struct transport_catalogue::details::Stop{
+    + name : std::string_view
+    + location : geo::Coordinates
+}
+struct transport_catalogue::details::Route{
+    + name : std::string_view
+    + stops : std::forward_list<Stop*>
+}
+struct transport_catalogue::details::StopInfo{
+    + name : std::string_view
+    + routes : std::unordered_set<Route*>
+}
+struct transport_catalogue::details::RouteInfo{
+    + name : std::string_view
+    + stops_count : unsigned int
+    + unique_stops_count : unsigned int
+    + distance_total : size_t
+    + curvature : double
+}
+class transport_catalogue::size_t_wrapper::Wrapper{
+    using VertexT = details::Stop
+    using CPtrVertexT = const VertexT* const
+    --
+    - vertex_to_id_map_ : std::map<CPtrVertexT, size_t>
+    - id_to_vertex_map_ : std::map<size_t, StopInfo>
+    - id_to_edge_map_ : std::map<size_t, EdgeInfo>
+
+    + WrapVertex(ptr : VertexT) : std::optional<size_t>
+    + UnwrapVertex(id : size_t) : StopInfo&
+    + UnwrapEdge(edge_number : size_t) : EdgeInfo&
+
+    - Wrapper() = default
+    - AddEdge(id : size_t, info : EdgeInfo&&)
+}
+struct transport_catalogue::size_t_wrapper::EdgeInfo{
+    + bus_name : std::string_view
+    + wait_stop_name : std::string_view
+    + span_count : unsigned int
+    + time double
+}
+struct transport_catalogue::size_t_wrapper::StopInfo{
+    + name : std::string_view
+}
+class transport_catalogue::size_t_wrapper::Builder<Catalogue, Wrapper>{
+    - catalogue_ : Catalogue&
+    - graph_ : DirectedWeightedGraph<double>&
+    - bus_wait_time_ : unsigned int
+    - bus_velocity_ : unsigned int
+    - vertex_number_ : size_t = 0
+    - edge_number_ : size_t = 0
+    - wrapper_ : Wrapper
+
+    + Builder(init : BuilderInit&&)
+    + Make() : std::unique_ptr<Wrapper>
+
+    - CreateSubRoutes(name : std::string_view, route : Route&)
+    - GiveStopId(stop_ptr : Stop*) : size_t
+}
+struct transport_catalogue::size_t_wrapper::BuilderInit{
+    + catalogue : Catalogue&
+    + graph : DirectedWeightedGraph<double>&
+    + bus_wait_time : unsigned int
+    + bus_velocity : unsigned int
+}
+
+Stop *-- geo::Coordinates
+Route o-- Stop
+transport_catalogue::details::StopInfo o-- Route
+Wrapper *-- transport_catalogue::size_t_wrapper::EdgeInfo
+Wrapper *-- transport_catalogue::size_t_wrapper::StopInfo
+transport_catalogue::size_t_wrapper::Builder --> Wrapper : < construct
+transport_catalogue::size_t_wrapper::Builder --> BuilderInit : < use to initialize
+transport_catalogue::size_t_wrapper::Builder o-- transport_catalogue::TransportCatalogue
+transport_catalogue::size_t_wrapper::Builder o-- DirectedWeightedGraph
+
+'request_handler.hpp
+enum transport_catalogue::configurator::QueryType{
+    StopCreate
+    RouteCreate
+    DistanceSet
+    MapRender
+    InitRouter
+}
+struct transport_catalogue::configurator::StopCreateQueryContent{
+    + name : std::string_view
+    + location : geo::Coordinates
+}
+struct transport_catalogue::configurator::RouteCreateQueryContent{
+    + name : std::string_view
+    + stops_names : std::vector<std::string_view>
+    + is_round_trip : bool
+}
+struct transport_catalogue::configurator::DistanceSetQueryContent{
+    + distances : 
+        std::unordered_map<
+            std::pair<std::string_view, std::string_view>
+            , unsigned long, StringViewPairHasher
+        >
+}
+struct transport_catalogue::configurator::InitRouterQueryContent{
+    + bus_wait_time : unsigned int
+    + bus_velocity : unsigned int
+}
+struct transport_catalogue::configurator::Query{
+    + type : QueryType
+    + context : 
+        std::variant<StopCreateQueryContent
+                    , RouteCreateQueryContent
+                    , DistanceSetQueryContent
+                    , svg_renderer::RenderSettings
+                    , InitRouterQueryContent
+        >
+}
+interface transport_catalogue::configurator::IInputReader{
+    # query_ptr_queue_ : std::priority_queue<Query*, std::vector<Query*>, QueryPtrCompare>*
+    # unique_strings_ : std::unordered_set<std::string>
+    # queries_ : std::deque<Query>*
+
+    + ~IInputReader() = default {abstract}
+}
+interface transport_catalogue::configurator::IDataBaseConfigurator{
+    # catalogue_ : TransportCatalogue*
+    # query_ptr_queue_ : std::priority_queue<Query*, std::vector<Query*>, QueryPtrCompare>
+    # queries_ : std::deque<Query>
+
+    + ~IDataBaseConfigurator() = default {abstract}
+
+    # ExecuteQueries()
+    # ExecuteQuery(query : Query)
+    # FindRouteStops(stop_names_ref : std::vector<std::string_view>&, route_data : svg_renderer::RouteData&)
+}
+class transport_catalogue::configurator::json_io::InputReader{
+    + InputReader(std::priority_queue<Query*,std::vector<Query*>,QueryPtrCompare>* query_ref_queue, std::deque<Query>* queries)
+    + ReadQueries(node : json::Node&) : size_t
+    + ProcessMapRenderQuery(node : json::Node&)
+    + ProcessInitRouterQuery(node : json::Node&)
+
+    - ProcessStopQuery(node : json::Node&)
+    - ProcessRouteQuery(node : json::Node&)
+    - MakeRouteCircle(stops : std::vector<std::string_view>&&) : std::vector<std::string_view>
+    - ParseColorFromJSON(node : json::Node&) : svg_renderer::Color
+}
+class transport_catalogue::configurator::json_io::DataBaseConfigurator{
+    - input_reader_ : InputReader
+
+    + DataBaseConfigurator(catalogue : TransportCatalogue*)
+    + SetCatalogue(node_ref : json::Node&)
+    + ReadMapRenderQuery(node : json::Node&)
+    + ReadInitRouterQuery(node : json::Node&)
+
+    - GetQueries(node_ref : json::Node&) : size_t
+}
+
+enum transport_catalogue::io_handler::QueryType{
+    RouteInfo
+    StopInfo
+    DrawMap
+    BuildRoute
+}
+struct transport_catalogue::io_handler::StopInfoQueryContent{
+    + name : std::string
+}
+struct transport_catalogue::io_handler::RouteInfoQueryContent{
+    + name : std::string
+}
+struct transport_catalogue::io_handler::BuildRouteQueryContent{
+    + from : std::string
+    + to : std::string
+}
+struct transport_catalogue::io_handler::Query{
+    + id : int
+    + type : QueryType
+    + content : 
+        std::variant<
+        StopInfoQueryContent
+        , RouteInfoQueryContent
+        , std::monostate
+        , BuildRouteQueryContent
+    >
+}
+interface transport_catalogue::io_handler::IInputReader{
+    # query_queue_ : std::queue<Query>*
+
+    + ~IInputReader() = default {abstract}
+}
+interface transport_catalogue::io_handler::IDataBaseIOHandler{
+    # catalogue_ : TransportCatalogue*
+    # query_queue_ : std::queue<Query>
+
+    + ~IDataBaseIOHandler() = default {abstract}
+    
+    # ExecuteQueries()
+    # ExecuteQuery(query : Query) = 0 {abstract}
+}
+class transport_catalogue::io_handler::json_io::InputReader{
+    + InputReader(query_queue : std::queue<Query>*)
+    + ReadQueries(node : json::Node&) : size_t
+    + ProcessDrawMapQuery(node : json::Node&)
+
+    - ProcessRouteGetInfoQuery(node : json::Node&)
+    - ProcessStopGetInfoQuery(node : json::Node&)
+    - ProcessBuildRouteQuery(node : json::Node&)
+}
+class transport_catalogue::io_handler::json_io::DataBaseIOHandler{
+    - answer_ : json::Array
+    - input_reader_ : InputReader
+
+    + DataBaseIOHandler(catalogue : TransportCatalogue*)
+    + ProcessIOQueries(node_ref : json::Node&)
+
+    - GetQueries(node_ref : json::Node&) : size_t
+    - PrintAnswers(output_stream : std::ostream&)
+    - PrintStopInfo(info : details::StopInfo&, id : int)
+    - PrintRouteInfo(details::RouteInfo& info, int id)
+    - PrintRouterBuildedInfo(info : std::optional<transport_router::RouteInfo*>&&, id : int)
+}
+
+transport_catalogue::configurator::StopCreateQueryContent *-- geo::Coordinates
+transport_catalogue::configurator::Query *-- transport_catalogue::configurator::StopCreateQueryContent
+transport_catalogue::configurator::Query *-- transport_catalogue::configurator::RouteCreateQueryContent
+transport_catalogue::configurator::Query *-- transport_catalogue::configurator::DistanceSetQueryContent
+transport_catalogue::configurator::Query *-- svg_renderer::RenderSettings
+transport_catalogue::configurator::Query *-- transport_catalogue::configurator::InitRouterQueryContent
+transport_catalogue::configurator::IInputReader o-- transport_catalogue::configurator::Query
+transport_catalogue::configurator::IDataBaseConfigurator o-- transport_catalogue::TransportCatalogue
+transport_catalogue::configurator::IDataBaseConfigurator *-- transport_catalogue::configurator::Query
+transport_catalogue::configurator::Query *-- transport_catalogue::configurator::QueryType
+transport_catalogue::configurator::IInputReader <|.. transport_catalogue::configurator::json_io::InputReader
+transport_catalogue::configurator::IDataBaseConfigurator <|.. transport_catalogue::configurator::json_io::DataBaseConfigurator
+transport_catalogue::configurator::json_io::InputReader --> json::Node : < use
+transport_catalogue::configurator::json_io::DataBaseConfigurator *-- transport_catalogue::configurator::json_io::InputReader
+
+transport_catalogue::io_handler::Query *-- transport_catalogue::io_handler::QueryType
+transport_catalogue::io_handler::Query *-- transport_catalogue::io_handler::StopInfoQueryContent
+transport_catalogue::io_handler::Query *-- transport_catalogue::io_handler::RouteInfoQueryContent
+transport_catalogue::io_handler::Query *-- transport_catalogue::io_handler::BuildRouteQueryContent
+transport_catalogue::io_handler::IInputReader o-- transport_catalogue::io_handler::Query
+transport_catalogue::io_handler::IDataBaseIOHandler o-- transport_catalogue::TransportCatalogue
+transport_catalogue::io_handler::IDataBaseIOHandler *-- transport_catalogue::io_handler::Query
+transport_catalogue::io_handler::IInputReader <|.. transport_catalogue::io_handler::json_io::InputReader
+transport_catalogue::io_handler::IDataBaseIOHandler <|.. transport_catalogue::io_handler::json_io::DataBaseIOHandler
+transport_catalogue::io_handler::json_io::InputReader --> json::Node : < use
+transport_catalogue::io_handler::json_io::DataBaseIOHandler *-- transport_catalogue::io_handler::json_io::InputReader
+
+'transport_catalogue.hpp
+class transport_catalogue::TransportCatalogue{
+    friend class size_t_wrapper::Wrapper::Builder<TransportCatalogue, size_t_wrapper::Wrapper>
+    using Vertex = const details::Stop* const
+    using VertexHasher = details::StopPtrPairHasher
+    using Cell = unsigned long
+    using AdjacencyMatrix = std::unordered_map<std::pair<Vertex, Vertex>, Cell, VertexHasher>
+    using Router = transport_router::TransportRouter
+    --
+    - unique_stops_ : std::unordered_map<std::string_view, details::Stop>
+    - unique_routes_ : std::unordered_map<std::string_view, details::Route>
+    - routes_info_ : std::unordered_map<std::string_view, details::RouteInfo>
+    - stops_info_ : std::unordered_map<std::string_view, details::StopInfo> 
+    - stops_to_routes_ : 
+        std::unordered_map<
+            std::string_view
+            , std::unordered_set<details::Route*, details::RoutePtrHasher>
+        >
+    - distance_graph_ : AdjacencyMatrix
+    - router_ : Router
+    - unique_names_ : std::unordered_set<std::string>
+
+    + AddStop(name : std::string&&, location : geo::Coordinates&&)
+    + AddRoute(name : std::string&&, stops_names : std::vector<std::string_view>&&)
+    + GetStop(name : std::string_view) : details::Stop&
+    + GetStopPtr(name : std::string_view) : details::Stop*
+    + GetStopsCount() : size_t
+    + GetRoute(name : std::string_view) : details::Route&
+    + GetRouteInfo(name : std::string_view) : details::RouteInfo&
+    + GetStopInfo(name : std::string_view) : details::StopInfo&
+    + SetDistanceBetweenStops(
+        stop_from : details::Stop*
+        , stop_to : details::Stop*
+        , distance : unsigned long
+    )
+    + GetDistanceBetweenStops(
+        stop_from : details::Stop*
+        , stop_to : details::Stop*
+    ) : unsigned long
+    + InitRouter(init : Router::TransportRouterInitList&&)
+    + BuildRoute(
+        from : std::string_view
+        , to : std::string_view
+    ) : std::optional<const transport_router::RouteInfo* const>
+
+    - SaveNewRouteInfo(name : std::string_view) : details::RouteInfo&
+    - CreateRouteInfo(route_ptr : details::Route*) : details::RouteInfo
+
+    - SaveNewStopInfo(name : std::string_view) : details::StopInfo& 
+    - CreateStopInfo(stop_ptr : details::Stop*) : details::StopInfo
+}
+
+transport_catalogue::TransportCatalogue --> transport_catalogue::size_t_wrapper::Wrapper : < friend class
+transport_catalogue::TransportCatalogue *-- transport_catalogue::details::Stop
+transport_catalogue::TransportCatalogue *-- transport_catalogue::details::Route
+transport_catalogue::TransportCatalogue *-- transport_catalogue::details::RouteInfo
+transport_catalogue::TransportCatalogue *-- transport_catalogue::details::StopInfo
+transport_catalogue::TransportCatalogue *-- transport_router::TransportRouter
+
+'geo.hpp
+struct geo::Coordinates{
+    + lat : double
+    + lng : double
+}
+
+'ranges.hpp
+class ranges::Range<It>{
+    using ValueType = typename std::iterator_traits<It>::value_type
+    --
+    - begin_ : It
+    - end_ : It
+
+    + Range(begin : It, end : It)
+    + begin() : It
+    + end() : It
+}
+
+@enduml
