@@ -47,6 +47,6 @@
 
 ## Документация
 
-На текущий момент документация к проекту - диаграмма классов на языке PlantUML. Её можно просмотреть через инструмент - [такой](https://plantuml-editor.kkeisuke.com/) или [такой](https://www.plantuml.com/plantuml/uml/SyfFKj2rKt3CoKnELR1Io4ZDoSa700003). Также есть готовое изображение в формате `.svg`.
+На текущий момент документация к проекту - диаграмма классов на языке PlantUML. Её можно просмотреть через инструмент - [такой](https://plantuml-editor.kkeisuke.com/) или [такой](https://www.plantuml.com/plantuml/uml/SyfFKj2rKt3CoKnELR1Io4ZDoSa700003). Также есть готовое изображение в формате [`.svg`](transport_catalogue/docs/class_diagram/class_diagram.svg).
 Сейчас диаграмма достаточна большая, так как вмещает в себя почти все классы проекта, поэтому в ближайшее время я планирую разбить её на несколько отдельных самостоятельных диаграмм.
 ![Диаграмма классов](transport_catalogue/docs/class_diagram/class_diagram.svg)
